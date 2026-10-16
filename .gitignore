@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+ENV/
+
+# Артефакты приложения
+graph.png
+*.svg
+*.png
+
+# IDE
+.idea/
+.vscode/
+
+.ruff_cache

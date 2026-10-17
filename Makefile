@@ -1,10 +1,29 @@
-.PHONY: run test lint
 
+
+```makefile
+.PHONY: run install test lint clean stage2
+
+# Запуск приложения (пример: make run ARGS="--package express --repo https://github.com/expressjs/express")
 run:
-	python -m src.main
+	./run.sh $(ARGS)
 
+# Установка/обновление зависимостей
+install:
+	pip install -r requirements.txt
+
+# Запуск тестов (pytest)
 test:
-	python -m unittest discover -s tests -v
+	.venv/bin/python -m pytest tests/ -v
 
+# Проверка Этапа 2 (тесты + ручной вывод локальной фикстуры)
+stage2:
+	./test_stage2.sh
+
+# Линтинг (если установлен ruff/flake8, опционально)
 lint:
-	python -m compileall src tests
+	.venv/bin/python -m ruff check src/ || true
+
+# Очистка временных файлов
+clean:
+	rm -rf .venv __pycache__ src/__pycache__ tests/__pycache__ .pytest_cache
+	find . -name '*.pyc' -delete

@@ -31,7 +31,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output",
-        default="graph.png",
+        default="graph.svg",
         help="Имя сгенерированного файла с изображением графа.",
     )
     parser.add_argument(
@@ -47,9 +47,7 @@ def validate_package(package_name: str) -> None:
     if not package_name.strip():
         raise ValidationError("Параметр --package не может быть пустым.")
     if package_name != package_name.strip():
-        raise ValidationError(
-            "Имя пакета не должно содержать пробелы по краям."
-        )
+        raise ValidationError("Имя пакета не должно содержать пробелы по краям.")
 
 
 def validate_repo(repo: str, test_mode: bool) -> None:
@@ -59,13 +57,9 @@ def validate_repo(repo: str, test_mode: bool) -> None:
 
     if test_mode:
         if not os.path.exists(repo):
-            raise ValidationError(
-                f"Файл тестового репозитория не найден: {repo}"
-            )
+            raise ValidationError(f"Файл тестового репозитория не найден: {repo}")
         if not os.path.isfile(repo):
-            raise ValidationError(
-                f"Путь тестового репозитория не является файлом: {repo}"
-            )
+            raise ValidationError(f"Путь тестового репозитория не является файлом: {repo}")
     else:
         parsed = urlparse(repo)
 
@@ -85,9 +79,7 @@ def validate_output(output: str) -> None:
     if not output.strip():
         raise ValidationError("Параметр --output не может быть пустым.")
     if os.path.isdir(output):
-        raise ValidationError(
-            f"Параметр --output указывает на директорию: {output}"
-        )
+        raise ValidationError(f"Параметр --output указывает на директорию: {output}")
 
 
 def parse_args(argv: list[str] | None = None) -> AppConfig:

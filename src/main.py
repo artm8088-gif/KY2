@@ -3,6 +3,7 @@
 import sys
 
 from src.cli import parse_args
+from src.config import AppConfig
 from src.errors import ConfigError
 from src.npm import (
     fetch_remote_package_json,
@@ -11,77 +12,103 @@ from src.npm import (
 )
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Точка входа приложения. Возвращает код завершения (0-успех,1-ошибка)."""
+def load_package_json(config: AppConfig) -> dict:
+    """Загружает package.json согласно режиму работы.
+
+    Args:
+        config: Конфигурация приложения.
+
+    Returns:
+        Словарь с данными package.json.
+
+    Raises:
+        ValidationError: При ошибке загрузки или парсинга.
+    """
+    if config.test_mode:
+        return read_local_package_json(config.repo)
+    return fetch_remote_package_json(config.repo)
+
+
+def print_dependencies(
+    package_json: dict,
+    dependencies: dict[str, str],
+    source: str,
+    fallback_name: str,
+) -> None:
+    """Печатает информацию о пакете и его прямых зависимостях.
+
+    Args:
+        package_json: Данные package.json.
+        dependencies: Словарь зависимостей (имя → версия).
+        source: Источник данных (URL или путь).
+        fallback_name: Имя пакета, если в JSON его нет.
+    """
+    name = package_json.get("name", fallback_name)
+    version = package_json.get("version", "?")
+    print(f"Пакет: {name}@{version}")
+    print(f"Источник: {source}")
+
+    if not dependencies:
+        print("Прямых зависимостей нет.")
+        return
+
+    print(f"Прямые зависимости ({len(dependencies)}):")
+    for dep_name in sorted(dependencies):
+        print(f"  - {dep_name} {dependencies[dep_name]}")
+
+
+def parse_config(argv: list[str] | None) -> AppConfig | None:
+    """Парсит аргументы командной строки.
+
+    Args:
+        argv: Аргументы командной строки (или None для sys.argv).
+
+    Returns:
+        Объект AppConfig или None при ошибке парсинга.
+    """
     try:
-        """ parse_args читает sys.argv, проверяет параметры (через src.cli)
-        и возвращает объект AppConfig с настройками"""
-        config = parse_args(argv)
+        return parse_args(argv)
     except ConfigError as exc:
-        """Если в параметрах что-то не так (пустой пакет, битый URL, etc.),
-        выводим ошибку в stderr (поток ошибок) и возвращаем 1"""
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
-        return 1
+        return None
     except SystemExit as exc:
-        """Это перехват стандартного поведения argparse.
-        Например, если пользователь ввёл`--help`,argparse вызывает sys.exit(0).
-        Или если не передал обязательный аргумент — sys.exit(2).
-        Мы аккуратно возвращаем этот код, чтобы скрипт завершился корректно"""
-        return int(exc.code) if exc.code is not None else 0
+        if exc.code is not None and exc.code != 0:
+            return None
+        return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Запускает приложение и возвращает код завершения.
+
+    Args:
+        argv: Аргументы командной строки (по умолчанию sys.argv).
+
+    Returns:
+        0 при успехе, 1 при ошибке.
+    """
+    config = parse_config(argv)
+    if config is None:
+        return 1
+
     print("Параметры приложения:")
-    print(config.to_key_value())  # Методиз src.config, печатает ключ = значение
-    print()  # Пустая строка для визуального отделения этапов
+    print(config.to_key_value())
+    print()
 
     try:
-        # Получаем package.json
-        # В зависимости от режима (тестовый или реальный)
-        if config.test_mode:
-            # Тестовый режим: читаем локальный файл по пути config.repo
-            package_json = read_local_package_json(config.repo)
-            source = config.repo
-        else:
-            # Реальный режим: скачиваем по URL (GitHub/GitLab)
-            package_json = fetch_remote_package_json(config.repo)
-            source = config.repo
-
-        # Извлекаем прямые зависимости
-        # Возвращает словарь: {"имя_зависимости": "версия", ...}
-        deps = get_direct_dependencies(package_json)
-
-        # Достаём имя и версию пакета для красивого вывода
-        # Если в JSON нет поля "name", берём имя из аргументов командной строки
-        name = package_json.get("name", config.package_name)
-        version = package_json.get(
-            "version", "?"
-        )  # Если версии нет, ставим "?"
-
-        # Выводим результат на экран
-        print(f"Пакет: {name}@{version}")
-        print(f"Источник: {source}")
-
-        # Если зависимостей нет вообще
-        if not deps:
-            print("Прямых зависимостей нет.")
-            return 0
-
-        # Если есть — выводим их количество и отсортированный список
-        # sorted(deps) сортирует ключи словаря (имена пакетов) по алфавиту
-        print(f"Прямые зависимости ({len(deps)}):")
-        for dep in sorted(deps):
-            print(f"  - {dep} {deps[dep]}")
-
-        return 0
-
+        package_json = load_package_json(config)
+        dependencies = get_direct_dependencies(package_json)
     except ConfigError as exc:
-        # Если что-то пошло не так на этапе скачивания/чтения/парсинга
-        # (например, 404, битый JSON, нет прав на чтение файла)
-        # выводим ошибку и возвращаем 1
         print(f"Ошибка сбора данных: {exc}", file=sys.stderr)
         return 1
 
+    print_dependencies(
+        package_json,
+        dependencies,
+        config.repo,
+        config.package_name,
+    )
+    return 0
+
 
 if __name__ == "__main__":
-    # sys.exit(main()) передаёт код возврата из main() в операционную систему.
-    # Это нужно для того, чтобы инструменты вроде CI/CD или bash-скриптов
-    # могли понять, успешно завершилась программа (0) или упала (1).
     sys.exit(main())

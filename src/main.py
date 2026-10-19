@@ -12,7 +12,7 @@ from src.npm import (
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Точка входа приложения. Возвращает код завершения (0 - успех, 1 - ошибка)."""
+    """Точка входа приложения. Возвращает код завершения (0-успех,1-ошибка)."""
     try:
         """ parse_args читает sys.argv, проверяет параметры (через src.cli)
         и возвращает объект AppConfig с настройками"""
@@ -24,12 +24,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     except SystemExit as exc:
         """Это перехват стандартного поведения argparse.
-        Например, если пользователь ввёл `--help`, argparse вызывает sys.exit(0).
+        Например, если пользователь ввёл`--help`,argparse вызывает sys.exit(0).
         Или если не передал обязательный аргумент — sys.exit(2).
         Мы аккуратно возвращаем этот код, чтобы скрипт завершился корректно"""
         return int(exc.code) if exc.code is not None else 0
     print("Параметры приложения:")
-    print(config.to_key_value())  # Метод из src.config, печатает ключ = значение
+    print(config.to_key_value())  # Методиз src.config, печатает ключ = значение
     print()  # Пустая строка для визуального отделения этапов
 
     try:
@@ -51,7 +51,9 @@ def main(argv: list[str] | None = None) -> int:
         # Достаём имя и версию пакета для красивого вывода
         # Если в JSON нет поля "name", берём имя из аргументов командной строки
         name = package_json.get("name", config.package_name)
-        version = package_json.get("version", "?")  # Если версии нет, ставим "?"
+        version = package_json.get(
+            "version", "?"
+        )  # Если версии нет, ставим "?"
 
         # Выводим результат на экран
         print(f"Пакет: {name}@{version}")

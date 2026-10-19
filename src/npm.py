@@ -8,10 +8,10 @@ from urllib.parse import urlparse
 
 from src.errors import ValidationError
 
-# Таймаут HTTP-запроса в секундах.
+"""Таймаут HTTP-запроса в секундах."""
 TIMEOUT = 15
 
-# Минимум частей пути в URL репозитория (owner + repo).
+"""Минимум частей пути в URL репозитория (owner + repo)."""
 MIN_PATH_PARTS = 2
 
 

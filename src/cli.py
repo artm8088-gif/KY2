@@ -12,7 +12,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Создаёт парсер аргументов командной строки."""
     parser = argparse.ArgumentParser(
         prog="dependency-visualizer",
-        description="Инструмент визуализации графа зависимостей (Этап 1).",
+        description="Инструмент визуализации графа зависимостей.",
     )
     parser.add_argument(
         "--package",
@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--repo",
         required=True,
-        help="URL-адрес репозитория или путь к файлу тестового репозитория.",
+        help="URL репозитория или путь к тестовому JSON-файлу.",
     )
     parser.add_argument(
         "--test-mode",
@@ -32,12 +32,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         default="graph.svg",
-        help="Имя сгенерированного файла с изображением графа.",
+        help="Имя генерируемого файла с изображением графа.",
     )
     parser.add_argument(
         "--ascii-tree",
         action="store_true",
-        help="Режим вывода зависимостей в формате ASCII-дерева.",
+        help="Вывести зависимости в формате ASCII-дерева.",
+    )
+    parser.add_argument(
+        "--load-order",
+        action="store_true",
+        help="Вывести порядок загрузки пакетов с учётом зависимостей.",
+    )
+    parser.add_argument(
+        "--compare-npm",
+        action="store_true",
+        help="Сравнить граф зависимостей с реальным npm.",
     )
     return parser
 
@@ -45,9 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
 def validate_package(package_name: str) -> None:
     """Проверяет корректность параметра --package."""
     if not package_name.strip():
-        raise ValidationError(
-            "Параметр --package не может быть пустым.",
-        )
+        raise ValidationError("Параметр --package не может быть пустым.")
+
     if package_name != package_name.strip():
         raise ValidationError(
             "Имя пакета не должно содержать пробелы по краям."
@@ -64,6 +73,7 @@ def validate_repo(repo: str, test_mode: bool) -> None:
             raise ValidationError(
                 f"Файл тестового репозитория не найден: {repo}"
             )
+
         if not os.path.isfile(repo):
             raise ValidationError(
                 f"Путь тестового репозитория не является файлом: {repo}"
@@ -86,6 +96,7 @@ def validate_output(output: str) -> None:
     """Проверяет корректность параметра --output."""
     if not output.strip():
         raise ValidationError("Параметр --output не может быть пустым.")
+
     if os.path.isdir(output):
         raise ValidationError(
             f"Параметр --output указывает на директорию: {output}"
@@ -107,4 +118,6 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
         test_mode=args.test_mode,
         output_file=args.output,
         ascii_tree=args.ascii_tree,
+        load_order=args.load_order,
+        compare_npm=args.compare_npm,
     )

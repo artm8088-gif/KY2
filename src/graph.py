@@ -428,3 +428,78 @@ def print_ascii_tree(
                     False,
                 )
             )
+
+
+def get_load_order(
+    graph: dict[str, dict[str, str]],
+) -> list[str]:
+    """Определяет порядок загрузки пакетов топологической сортировкой.
+
+    Пакеты располагаются так, чтобы каждая зависимость находилась
+    раньше пакета, которому она необходима.
+
+    Используется алгоритм Кана без рекурсии. Если граф содержит цикл,
+    полный порядок загрузки построить невозможно.
+
+    Args:
+        graph: Граф, в котором ключи — пакеты, а значения —
+            словари их прямых зависимостей.
+
+    Returns:
+        Список имён пакетов в порядке загрузки.
+
+    Raises:
+        ValidationError: Если граф содержит циклические зависимости.
+    """
+    # Для каждого пакета считаем количество его зависимостей,
+    # которые также присутствуют в графе.
+    dependency_count = {
+        package: sum(dependency in graph for dependency in dependencies)
+        for package, dependencies in graph.items()
+    }
+
+    # Строим обратные связи:
+    # для каждой зависимости запоминаем пакеты, которым она нужна.
+    dependents: dict[str, list[str]] = {package: [] for package in graph}
+
+    for package, dependencies in graph.items():
+        for dependency in dependencies:
+            if dependency in graph:
+                dependents[dependency].append(package)
+
+    # Начинаем с пакетов, у которых нет зависимостей.
+    queue = deque(
+        sorted(
+            package for package, count in dependency_count.items() if count == 0
+        )
+    )
+
+    load_order: list[str] = []
+
+    # Последовательно добавляем пакеты, чьи зависимости уже обработаны.
+    while queue:
+        package = queue.popleft()
+        load_order.append(package)
+
+        # Убираем обработанную зависимость из требований
+        # пакетов, которые от неё зависят.
+        for dependent in sorted(dependents[package]):
+            dependency_count[dependent] -= 1
+
+            # Когда все зависимости пакета обработаны,
+            # его тоже можно добавить в очередь.
+            if dependency_count[dependent] == 0:
+                queue.append(dependent)
+
+    # Если обработаны не все пакеты, в графе есть цикл.
+    if len(load_order) != len(graph):
+        cyclic_packages = sorted(
+            package for package, count in dependency_count.items() if count > 0
+        )
+        raise ValidationError(
+            "Невозможно определить полный порядок загрузки: "
+            "обнаружены циклические зависимости. "
+            f"Затронутые пакеты: {', '.join(cyclic_packages)}"
+        )
+
+    return load_order

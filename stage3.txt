@@ -1,0 +1,11 @@
+маленький реп.
+python3 -m src.main --package is-number --repo https://registry.npmjs.org/ --ascii-tree
+
+чуть больше реп.
+python3 -m src.main --package mime-types --repo https://registry.npmjs.org/ --ascii-tree
+
+крупный реп.
+python3 -m src.main --package axios --repo https://registry.npmjs.org/ --ascii-tree
+
+тест реп.
+python3 -m src.main --package A --repo tests/test_repo.json --test-mode --ascii-tree

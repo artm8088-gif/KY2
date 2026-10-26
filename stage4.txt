@@ -1,0 +1,17 @@
+python3 -m src.main \
+  --package A \
+  --repo tests/test_repo.json \
+  --test-mode \
+  --load-order
+
+  python3 -m src.main \
+  --package A \
+  --repo tests/test_repo.json \
+  --test-mode \
+  --load-order
+
+  python -m src.main --package debug --repo https://registry.npmjs.org --compare-npm
+  python -m src.main --package axios --repo https://registry.npmjs.org --compare-npm
+
+  если не скачан nodejs and npm https://nodejs.org/?utm_source=chatgpt.com или winget install OpenJS.NodeJS.LTS
+  

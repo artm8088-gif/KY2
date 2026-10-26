@@ -14,4 +14,5 @@ python3 -m src.main \
   python -m src.main --package axios --repo https://registry.npmjs.org --compare-npm
 
   если не скачан nodejs and npm https://nodejs.org/?utm_source=chatgpt.com или winget install OpenJS.NodeJS.LTS
+  winget install OpenJS.NodeJS.LTS --version 22.23.4
   

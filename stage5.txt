@@ -1,0 +1,21 @@
+python --version
+node --version
+npm --version
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install mermaidx
+
+npm install --global @mermaid-js/mermaid-cli
+
+python -m src.main --package axios --repo https://registry.npmjs.org --output axios.svg --ascii-tree
+
+python3 -m src.main --package is-number --repo https://registry.npmjs.org/ --output test.svg --ascii-tree
+
+python -m src.main --package mime-types --repo https://registry.npmjs.org --output mime-types.svg --ascii-tree
+
+python -m src.npm_visualization --package axios
+python -m src.npm_visualization --package mime-types
+python -m src.npm_visualization --package webpack
+
+python -m pytest tests/test.py -v

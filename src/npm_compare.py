@@ -12,6 +12,28 @@ class NpmCompareError(Exception):
     """Ошибка получения дерева зависимостей через npm."""
 
 
+def _collect_children(
+    dependencies: dict[str, Any],
+    parent_name: str,
+    nodes: set[str],
+    edges: set[tuple[str, str]],
+) -> None:
+    """Рекурсивно обходит дочерние узлы и накапливает пакеты и связи.
+
+    Args:
+        dependencies: Словарь {имя зависимости: узел} из поля dependencies.
+        parent_name: Имя родительского пакета для добавления рёбер.
+        nodes: Множество имён пакетов для накопления.
+        edges: Множество рёбер (родитель, зависимость) для накопления.
+    """
+    for dependency_name, dependency_node in dependencies.items():
+        if not isinstance(dependency_node, dict):
+            continue
+        child = dict(dependency_node)
+        child.setdefault("name", dependency_name)
+        _collect_npm_graph(child, parent_name, nodes, edges)
+
+
 def _collect_npm_graph(
     node: dict[str, Any],
     parent_name: str | None = None,
@@ -20,14 +42,14 @@ def _collect_npm_graph(
 ) -> tuple[set[str], set[tuple[str, str]]]:
     """Собирает имена пакетов и связи из дерева npm.
 
-    Рекурсивно обходит словарь зависимостей npm и накапливает
-    множества имён пакетов и рёбер (родитель, зависимость).
+    Рекурсивно обходит словарь зависимостей и накапливает множества
+    имён пакетов и рёбер (родитель, зависимость).
 
     Args:
-        node: Узел дерева npm (словарь с полями name и dependencies).
+        node: Узел дерева npm с полями name и dependencies.
         parent_name: Имя родительского пакета или None для корня.
-        nodes: Множество для накопления имён пакетов (создаётся при None).
-        edges: Множество для накопления рёбер (создаётся при None).
+        nodes: Множество имён пакетов (создаётся при None).
+        edges: Множество рёбер (создаётся при None).
 
     Returns:
         Кортеж (nodes, edges) с накопленными значениями.
@@ -47,12 +69,7 @@ def _collect_npm_graph(
 
     dependencies = node.get("dependencies", {})
     if isinstance(dependencies, dict):
-        for dependency_name, dependency_node in dependencies.items():
-            if not isinstance(dependency_node, dict):
-                continue
-            child = dict(dependency_node)
-            child.setdefault("name", dependency_name)
-            _collect_npm_graph(child, name, nodes, edges)
+        _collect_children(dependencies, name, nodes, edges)
 
     return nodes, edges
 

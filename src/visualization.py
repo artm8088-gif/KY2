@@ -86,30 +86,23 @@ def _escape_package_label(package: str) -> str:
 def generate_mermaid(graph: dict) -> str:
     r"""Преобразует граф зависимостей в текстовое описание Mermaid.
 
-    Сначала функция определяет полный набор пакетов, включая те,
-    которые встречаются только в списках зависимостей и не имеют
-    собственных записей в качестве ключей исходного словаря.
-    Каждому пакету назначается уникальный идентификатор вида node_0,
-    node_1 и так далее. Это позволяет отделить идентификатор узла
-    от имени пакета.
-    После объявления узлов создаются направленные связи от каждого
-    родительского пакета к его зависимостям.
+    Определяет полный набор пакетов (включая встречающиеся только
+    в списках зависимостей), назначает каждому уникальный
+    идентификатор node_N, объявляет узлы и создаёт направленные связи
+    от родительских пакетов к их зависимостям.
 
     Args:
-        graph: Словарь, где ключи — имена пакетов, а значения —
-            коллекции имён их непосредственных зависимостей.
+        graph: Словарь {пакет: коллекция имён зависимостей}.
 
     Returns:
-        Строка с Mermaid-описанием диаграммы. Используется синтаксис
-        flowchart TD, который располагает граф сверху вниз.
+        Строка с Mermaid-описанием диаграммы (flowchart TD).
 
     Example:
         >>> generate_mermaid({"app": ["library"]})
         'flowchart TD\\n    node_0["app"]\\n...'
 
     Note:
-        Пакеты и зависимости сортируются, чтобы результат был
-        предсказуемым при одинаковом входном графе.
+        Пакеты и зависимости сортируются для предсказуемого результата.
     """
     lines = ["flowchart TD"]
     packages = _collect_packages(graph)
@@ -176,51 +169,65 @@ def _render_and_save_svg(mermaid_text: str, svg_path: Path) -> None:
         raise VisualizationError("SVG-файл не был создан.")
 
 
+def _write_visualization(
+    graph: dict,
+    svg_path: Path,
+) -> Path:
+    """Создаёт каталог, пишет .mmd и .svg и возвращает путь к .mmd-файлу.
+
+    Args:
+        graph: Граф зависимостей.
+        svg_path: Путь к целевому SVG-файлу.
+
+    Returns:
+        Путь к созданному .mmd-файлу.
+
+    Raises:
+        VisualizationError: Если визуализацию создать не удалось.
+    """
+    svg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    mermaid_text = generate_mermaid(graph)
+    mermaid_path = _write_mermaid_file(mermaid_text, svg_path)
+    _render_and_save_svg(mermaid_text, svg_path)
+    return mermaid_path
+
+
 def save_graph(graph: dict, output_path: str) -> Path:
     """Сохраняет Mermaid-описание графа и SVG-изображение.
 
-    Функция проверяет расширение выходного пути, создаёт родительские
-    каталоги при необходимости, записывает Mermaid-описание в файл
-    .mmd и преобразует его в SVG при помощи библиотеки mermaidx.
+    Проверяет расширение выходного пути, создаёт родительские каталоги
+    при необходимости, записывает .mmd-файл и преобразует его в SVG
+    при помощи библиотеки mermaidx.
 
     Args:
         graph: Граф зависимостей в виде словаря.
-        output_path: Путь к результирующему SVG-файлу. Если путь
-            относительный, он интерпретируется относительно текущего
-            рабочего каталога. Тильда в начале пути раскрывается.
+        output_path: Путь к результирующему SVG-файлу. Относительный
+            путь интерпретируется от текущего каталога; тильда
+            в начале пути раскрывается.
 
     Returns:
         Объект pathlib.Path с путём к сохранённому SVG-файлу.
 
     Raises:
-        VisualizationError: Если указано неподходящее расширение,
-            не удалось создать визуализацию или SVG-файл не появился.
-        OSError: Ошибки файловой системы оборачиваются в
-            VisualizationError с сохранением исходного исключения.
+        VisualizationError: При неподходящем расширении, ошибке
+            создания визуализации или отсутствии SVG-файла.
 
     Side Effects:
-        Создаёт каталог назначения при необходимости.
-        Записывает файлы .mmd и .svg.
-        Выводит пути к созданным файлам в консоль.
+        Создаёт каталог назначения, пишет .mmd и .svg,
+        выводит пути к созданным файлам в консоль.
     """
     svg_path = _validate_output_path(output_path)
 
     try:
-        svg_path.parent.mkdir(parents=True, exist_ok=True)
-
-        mermaid_text = generate_mermaid(graph)
-        mermaid_path = _write_mermaid_file(mermaid_text, svg_path)
-        _render_and_save_svg(mermaid_text, svg_path)
-
-        print(f"Mermaid-описание сохранено: {mermaid_path}")
-        print(f"Изображение графа сохранено: {svg_path}")
-
-        return svg_path
-
+        mermaid_path = _write_visualization(graph, svg_path)
     except VisualizationError:
         raise
-
     except Exception as exc:
         raise VisualizationError(
             f"Не удалось создать визуализацию: {exc}"
         ) from exc
+
+    print(f"Mermaid-описание сохранено: {mermaid_path}")
+    print(f"Изображение графа сохранено: {svg_path}")
+    return svg_path

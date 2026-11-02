@@ -36,9 +36,8 @@ def run_command(
 ) -> subprocess.CompletedProcess:
     """Выполняет внешнюю команду в указанном рабочем каталоге.
 
-    Команда запускается без оболочки, поэтому её аргументы передаются
-    списком. Стандартный вывод и поток ошибок считываются как текст
-    в кодировке UTF-8.
+    Команда запускается без оболочки, аргументы передаются списком.
+    stdout и stderr считываются как текст UTF-8.
 
     Args:
         command: Команда и её аргументы, например
@@ -46,13 +45,11 @@ def run_command(
         cwd: Каталог, в котором должна выполняться команда.
 
     Returns:
-        Результат выполнения subprocess.run, содержащий код завершения,
-        стандартный вывод и поток ошибок.
+        Результат subprocess.run с кодом завершения, stdout и stderr.
 
     Raises:
         RuntimeError: Если команда завершилась с ненулевым кодом.
-        OSError: Если операционная система не смогла запустить команду,
-            например, если npm не установлен или недоступен через PATH.
+        OSError: Если ОС не смогла запустить команду (нет npm в PATH).
     """
     result = subprocess.run(
         command,
@@ -84,62 +81,59 @@ def _escape_label(label: str) -> str:
     )
 
 
+def _add_mermaid_node(
+    package: dict,
+    lines: list[str],
+    counter: list[int],
+    parent_id: str | None = None,
+) -> None:
+    """Добавляет узел пакета и рекурсивно обрабатывает его зависимости.
+
+    Args:
+        package: Словарь с информацией о пакете и его зависимостях.
+        lines: Список строк Mermaid, в который дописываются узлы и связи.
+        counter: Одноэлементный список-счётчик для генерации node_id.
+        parent_id: Идентификатор родительского узла или None для корня.
+    """
+    name = package.get("name", "unknown")
+    version = package.get("version", "unknown")
+
+    node_id = f"n{counter[0]}"
+    counter[0] += 1
+
+    label = _escape_label(f"{name}@{version}")
+    lines.append(f'    {node_id}["{label}"]')
+
+    if parent_id is not None:
+        lines.append(f"    {parent_id} --> {node_id}")
+
+    dependencies = package.get("dependencies", {})
+    for dep_name, dependency in sorted(dependencies.items()):
+        dependency.setdefault("name", dep_name)
+        _add_mermaid_node(dependency, lines, counter, node_id)
+
+
 def npm_tree_to_mermaid(package_name: str, tree: dict) -> str:
     """Преобразует дерево зависимостей npm в описание Mermaid.
 
     Каждому экземпляру пакета присваивается уникальный идентификатор
-    узла. Это позволяет корректно отображать несколько экземпляров
-    одного пакета, если они присутствуют в разных ветвях дерева.
-
-    Узлы подписываются именем и версией пакета. Связь между узлами
-    направлена от родительского пакета к его зависимости.
+    узла, что позволяет корректно отображать несколько экземпляров
+    одного пакета в разных ветвях. Узлы подписываются именем и версией;
+    связи направлены от родителя к зависимости.
 
     Args:
-        package_name: Имя анализируемого пакета. Используется для
-            обозначения входного пакета в интерфейсе функции.
+        package_name: Имя анализируемого пакета.
         tree: Словарь с данными о пакете, полученными от npm.
 
     Returns:
         Строка с описанием диаграммы Mermaid в формате flowchart TD.
 
     Note:
-        Идентификаторы узлов формируются независимо от имён пакетов,
-        поэтому специальные символы в именах не влияют на связи.
-        Перед вставкой подписи в Mermaid экранируются некоторые
-        HTML-символы и кавычки.
+        Идентификаторы узлов не зависят от имён пакетов, поэтому
+        специальные символы в именах не влияют на связи.
     """
     lines = ["flowchart TD"]
-    state = {"counter": 0}
-
-    def add_node(
-        package: dict,
-        parent_id: str | None = None,
-    ) -> None:
-        """Добавляет узел пакета и рекурсивно обрабатывает его зависимости.
-
-        Args:
-            package: Словарь с информацией о пакете и его зависимостях.
-            parent_id: Идентификатор родительского узла. Для корневого
-                пакета значение равно None.
-        """
-        name = package.get("name", "unknown")
-        version = package.get("version", "unknown")
-
-        node_id = f"n{state['counter']}"
-        state["counter"] += 1
-
-        label = _escape_label(f"{name}@{version}")
-        lines.append(f'    {node_id}["{label}"]')
-
-        if parent_id is not None:
-            lines.append(f"    {parent_id} --> {node_id}")
-
-        dependencies = package.get("dependencies", {})
-        for dep_name, dependency in sorted(dependencies.items()):
-            dependency.setdefault("name", dep_name)
-            add_node(dependency, node_id)
-
-    add_node(tree)
+    _add_mermaid_node(tree, lines, [0])
     return "\n".join(lines) + "\n"
 
 
@@ -184,7 +178,7 @@ def _extract_package_tree(tree: dict, package_name: str) -> dict:
         package_name: Имя целевого пакета.
 
     Returns:
-        Поддерево целевого пакета с гарантированно заполненным полем name.
+        Поддерево целевого пакета с заполненным полем name.
 
     Raises:
         RuntimeError: Если пакет отсутствует в выводе npm ls.
@@ -209,7 +203,7 @@ def _write_outputs(
 
     Args:
         package_tree: Поддерево целевого пакета.
-        package_name: Имя пакета (используется при построении Mermaid).
+        package_name: Имя пакета (для построения Mermaid).
         safe_name: Безопасное имя пакета для имени файла.
         output_dir: Каталог, в который сохраняются файлы.
 
@@ -234,29 +228,29 @@ def _write_outputs(
     return json_path, mmd_path, svg_path
 
 
+def _print_paths(json_path: Path, mmd_path: Path, svg_path: Path) -> None:
+    """Печатает пути к созданным файлам визуализации."""
+    print(f"Дерево npm: {json_path}")
+    print(f"Mermaid:    {mmd_path}")
+    print(f"SVG:        {svg_path}")
+
+
 def create_npm_visualization(package_name: str) -> None:
     """Получает дерево npm и сохраняет его визуализацию в текущем каталоге.
 
-    Последовательность действий:
-        1. Создаёт временный каталог.
-        2. Инициализирует временный npm-проект.
-        3. Устанавливает анализируемый пакет.
-        4. Получает дерево зависимостей через npm ls.
-        5. Сохраняет дерево в JSON.
-        6. Преобразует дерево в описание Mermaid.
-        7. Создаёт и сохраняет SVG-изображение.
+    Создаёт временный npm-проект, устанавливает пакет, получает дерево
+    через npm ls, сохраняет JSON, Mermaid и SVG в текущий каталог.
 
     Args:
         package_name: Имя npm-пакета, например "axios" или "webpack".
 
     Raises:
-        RuntimeError: Если npm завершился с ошибкой или пакет отсутствует
-            в полученном дереве.
+        RuntimeError: Если npm завершился с ошибкой или пакет отсутствует.
         OSError: Если невозможно запустить npm или записать файлы.
         ValueError: Если вывод npm содержит некорректный JSON.
         KeyError: Если при обработке данных отсутствует обязательный ключ.
-        Exception: Библиотека mermaidx может выбросить собственную ошибку
-            при формировании или сохранении SVG.
+        Exception: mermaidx может выбросить собственную ошибку при
+            формировании или сохранении SVG.
     """
     output_dir = Path.cwd()
     safe_name = package_name.replace("/", "-").replace("@", "")
@@ -268,10 +262,7 @@ def create_npm_visualization(package_name: str) -> None:
         json_path, mmd_path, svg_path = _write_outputs(
             package_tree, package_name, safe_name, output_dir
         )
-
-        print(f"Дерево npm: {json_path}")
-        print(f"Mermaid:    {mmd_path}")
-        print(f"SVG:        {svg_path}")
+        _print_paths(json_path, mmd_path, svg_path)
 
 
 def main() -> None:

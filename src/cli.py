@@ -8,12 +8,12 @@ from src.config import AppConfig
 from src.errors import ValidationError
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Создаёт парсер аргументов командной строки."""
-    parser = argparse.ArgumentParser(
-        prog="dependency-visualizer",
-        description="Инструмент визуализации графа зависимостей.",
-    )
+def _add_required_arguments(parser: argparse.ArgumentParser) -> None:
+    """Добавляет в парсер обязательные аргументы --package и --repo.
+
+    Args:
+        parser: Парсер аргументов командной строки.
+    """
     parser.add_argument(
         "--package",
         required=True,
@@ -24,6 +24,14 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="URL репозитория или путь к тестовому JSON-файлу.",
     )
+
+
+def _add_optional_arguments(parser: argparse.ArgumentParser) -> None:
+    """Добавляет в парсер опциональные флаги и --output.
+
+    Args:
+        parser: Парсер аргументов командной строки.
+    """
     parser.add_argument(
         "--test-mode",
         action="store_true",
@@ -49,11 +57,32 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Сравнить граф зависимостей с реальным npm.",
     )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Создаёт парсер аргументов командной строки.
+
+    Returns:
+        Настроенный argparse.ArgumentParser со всеми аргументами CLI.
+    """
+    parser = argparse.ArgumentParser(
+        prog="dependency-visualizer",
+        description="Инструмент визуализации графа зависимостей.",
+    )
+    _add_required_arguments(parser)
+    _add_optional_arguments(parser)
     return parser
 
 
 def validate_package(package_name: str) -> None:
-    """Проверяет корректность параметра --package."""
+    """Проверяет корректность параметра --package.
+
+    Args:
+        package_name: Значение аргумента --package.
+
+    Raises:
+        ValidationError: Если имя пустое или содержит пробелы по краям.
+    """
     if not package_name.strip():
         raise ValidationError("Параметр --package не может быть пустым.")
 
@@ -63,37 +92,76 @@ def validate_package(package_name: str) -> None:
         )
 
 
+def _validate_test_repo_path(repo: str) -> None:
+    """Проверяет путь к тестовому репозиторию в тестовом режиме.
+
+    Args:
+        repo: Путь к файлу тестового репозитория.
+
+    Raises:
+        ValidationError: Если файл не существует или не является файлом.
+    """
+    if not os.path.exists(repo):
+        raise ValidationError(f"Файл тестового репозитория не найден: {repo}")
+
+    if not os.path.isfile(repo):
+        raise ValidationError(
+            f"Путь тестового репозитория не является файлом: {repo}"
+        )
+
+
+def _validate_repo_url(repo: str) -> None:
+    """Проверяет, что repo — корректный http(s)-URL.
+
+    Args:
+        repo: URL репозитория npm.
+
+    Raises:
+        ValidationError: Если URL некорректен.
+    """
+    parsed = urlparse(repo)
+    if (
+        parsed.scheme not in ("http", "https")
+        or not parsed.netloc
+        or any(char.isspace() for char in repo)
+    ):
+        raise ValidationError(
+            f"Некорректный URL репозитория: {repo}. "
+            "Ожидается полный URL с протоколом http или https."
+        )
+
+
 def validate_repo(repo: str, test_mode: bool) -> None:
-    """Проверяет корректность параметра --repo."""
+    """Проверяет корректность параметра --repo.
+
+    В тестовом режиме repo должен указывать на существующий файл,
+    иначе — быть корректным http(s)-URL.
+
+    Args:
+        repo: Значение аргумента --repo.
+        test_mode: Включён ли тестовый режим.
+
+    Raises:
+        ValidationError: Если repo пуст или не соответствует режиму.
+    """
     if not repo.strip():
         raise ValidationError("Параметр --repo не может быть пустым.")
 
     if test_mode:
-        if not os.path.exists(repo):
-            raise ValidationError(
-                f"Файл тестового репозитория не найден: {repo}"
-            )
-
-        if not os.path.isfile(repo):
-            raise ValidationError(
-                f"Путь тестового репозитория не является файлом: {repo}"
-            )
+        _validate_test_repo_path(repo)
     else:
-        parsed = urlparse(repo)
-
-        if (
-            parsed.scheme not in ("http", "https")
-            or not parsed.netloc
-            or any(char.isspace() for char in repo)
-        ):
-            raise ValidationError(
-                f"Некорректный URL репозитория: {repo}. "
-                "Ожидается полный URL с протоколом http или https."
-            )
+        _validate_repo_url(repo)
 
 
 def validate_output(output: str) -> None:
-    """Проверяет корректность параметра --output."""
+    """Проверяет корректность параметра --output.
+
+    Args:
+        output: Значение аргумента --output.
+
+    Raises:
+        ValidationError: Если путь пуст или указывает на директорию.
+    """
     if not output.strip():
         raise ValidationError("Параметр --output не может быть пустым.")
 
@@ -104,7 +172,17 @@ def validate_output(output: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> AppConfig:
-    """Парсит аргументы командной строки и валидирует их."""
+    """Парсит аргументы командной строки и валидирует их.
+
+    Args:
+        argv: Список аргументов или None для sys.argv[1:].
+
+    Returns:
+        Заполненный объект AppConfig.
+
+    Raises:
+        ValidationError: Если какой-либо аргумент некорректен.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 

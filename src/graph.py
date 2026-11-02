@@ -13,6 +13,11 @@ visited и scheduled. Благодаря этому алгоритм корре�
 в которых есть общие зависимости и циклические связи.
 
 Рекурсия при построении графа не используется.
+
+Константы модуля:
+    TIMEOUT: максимальное время ожидания ответа от npm Registry (секунды).
+    HTTP_404: HTTP-код «пакет не найден».
+    MAX_ATTEMPTS: максимальное количество попыток загрузить метаданные.
 """
 
 import json
@@ -25,13 +30,8 @@ from typing import Any
 
 from src.errors import ValidationError
 
-# Максимальное время ожидания ответа от npm Registry в секундах.
 TIMEOUT = 15
-
-# HTTP-код, обозначающий, что запрашиваемый пакет не найден.
 HTTP_404 = 404
-
-# Максимальное количество попыток загрузить метаданные пакета.
 MAX_ATTEMPTS = 3
 
 
@@ -66,35 +66,20 @@ def _validate_package_dependencies(name: str, package: Any) -> None:
             raise ValidationError(f"Некорректная зависимость пакета {name}.")
 
 
-def read_test_repository(path: str) -> dict[str, dict[str, Any]]:
-    """Загружает и проверяет описание тестового графа из JSON-файла.
-
-    Функция читает локальный файл, преобразует JSON в Python-объект
-    и проверяет его структуру перед использованием при построении графа.
-
-    Проверяются следующие условия:
-    - файл доступен для чтения и содержит корректный JSON;
-    - корневой элемент JSON является объектом;
-    - имена пакетов состоят только из заглавных латинских букв A–Z;
-    - описание каждого пакета является объектом;
-    - поле dependencies является объектом;
-    - имя каждой зависимости является строкой, а её версия —
-      строкой, целым числом или числом с плавающей точкой.
+def _load_repository_json(path: str) -> Any:
+    """Читает JSON-файл и возвращает разобранный Python-объект.
 
     Args:
-        path: Путь к локальному JSON-файлу с описанием пакетов
-            и их зависимостей.
+        path: Путь к локальному JSON-файлу.
 
     Returns:
-        Словарь, в котором ключи — имена пакетов, а значения —
-        их описания, включая поле dependencies.
+        Разобранный JSON-объект.
 
     Raises:
-        ValidationError: Если файл недоступен, JSON некорректен
-            или данные не соответствуют ожидаемой структуре.
+        ValidationError: Если файл недоступен или JSON некорректен.
     """
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return json.loads(Path(path).read_text(encoding="utf-8"))
     except OSError as exc:
         raise ValidationError(
             f"Не удалось прочитать тестовый репозиторий: {exc}"
@@ -103,6 +88,26 @@ def read_test_repository(path: str) -> dict[str, dict[str, Any]]:
         raise ValidationError(
             f"Некорректный JSON в тестовом репозитории: {exc}"
         ) from exc
+
+
+def read_test_repository(path: str) -> dict[str, dict[str, Any]]:
+    """Загружает и проверяет описание тестового графа из JSON-файла.
+
+    Проверяются: доступность файла и корректность JSON, объектный
+    корень, имена пакетов из заглавных A–Z, объектные описания пакетов
+    и поле dependencies, а также типы имён и версий зависимостей.
+
+    Args:
+        path: Путь к локальному JSON-файлу с описанием пакетов.
+
+    Returns:
+        Словарь {имя пакета: описание пакета}.
+
+    Raises:
+        ValidationError: Если файл недоступен, JSON некорректен
+            или данные не соответствуют ожидаемой структуре.
+    """
+    data = _load_repository_json(path)
 
     if not isinstance(data, dict):
         raise ValidationError("Тестовый репозиторий должен быть JSON-объектом.")
@@ -159,42 +164,43 @@ def _parse_registry_response(
     return data
 
 
+def _raise_registry_http_error(
+    exc: urllib.error.HTTPError,
+    url: str,
+    package_name: str,
+) -> None:
+    """Преобразует HTTP-ошибку npm Registry в ValidationError."""
+    if exc.code == HTTP_404:
+        raise ValidationError(
+            f"Пакет {package_name!r} не найден: {url}"
+        ) from exc
+    raise ValidationError(
+        f"npm Registry вернул HTTP {exc.code}: {url}"
+    ) from exc
+
+
 def fetch_registry_package(
     registry: str,
     package_name: str,
 ) -> dict[str, Any]:
     """Получает метаданные latest-версии пакета из npm Registry.
 
-    Функция формирует URL запроса, кодируя имя пакета для корректной
-    передачи в адресе, и отправляет HTTP-запрос к реестру npm.
-
-    При успешном ответе тело HTTP-ответа декодируется из UTF-8
-    и разбирается как JSON. Затем проверяется, что полученные данные
-    представлены объектом, а поле dependencies — словарём.
-
-    Если сервер возвращает HTTP 404, функция сообщает, что пакет
-    не найден. Другие HTTP-ошибки преобразуются в ValidationError.
-
-    Ошибки соединения, тайм-ауты и другие сетевые ошибки повторяются
-    до MAX_ATTEMPTS раз. Если все попытки завершились неудачно,
-    функция сообщает последнюю обнаруженную причину ошибки.
+    Формирует URL с кодированием имени пакета и отправляет HTTP-запрос.
+    Ответ декодируется из UTF-8 и разбирается как JSON, после чего
+    проверяется, что данные — объект, а dependencies — словарь.
+    HTTP 404 означает «пакет не найден». Сетевые ошибки повторяются
+    до MAX_ATTEMPTS раз; при неудаче сообщается последняя причина.
 
     Args:
-        registry: Базовый URL npm Registry, например
-            https://registry.npmjs.org/.
+        registry: Базовый URL npm Registry.
         package_name: Имя пакета, метаданные которого нужно получить.
 
     Returns:
-        Словарь с метаданными пакета, полученными из реестра.
+        Словарь с метаданными пакета из реестра.
 
     Raises:
         ValidationError: Если пакет не найден, сервер вернул ошибку,
-            ответ содержит некорректный JSON или данные имеют
-            неподходящую структуру, либо все попытки запроса не удались.
-
-    Note:
-        Запрашивается endpoint /latest. Функция не разрешает диапазоны
-        версий зависимостей и не загружает архивы пакетов.
+            ответ некорректен или все попытки запроса не удались.
     """
     url, request = _build_registry_request(registry, package_name)
     last_error = None
@@ -204,16 +210,8 @@ def fetch_registry_package(
             with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
                 raw = response.read()
             return _parse_registry_response(raw, package_name)
-
         except urllib.error.HTTPError as exc:
-            if exc.code == HTTP_404:
-                raise ValidationError(
-                    f"Пакет {package_name!r} не найден: {url}"
-                ) from exc
-            raise ValidationError(
-                f"npm Registry вернул HTTP {exc.code}: {url}"
-            ) from exc
-
+            _raise_registry_http_error(exc, url, package_name)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             last_error = exc
 
@@ -254,6 +252,18 @@ def _normalize_dependencies(
     }
 
 
+def _enqueue_new_dependencies(
+    dependencies: dict[str, str],
+    scheduled: set[str],
+    queue: deque[str],
+) -> None:
+    """Добавляет в очередь ещё не запланированные зависимости."""
+    for dependency in dependencies:
+        if dependency not in scheduled:
+            scheduled.add(dependency)
+            queue.append(dependency)
+
+
 def build_dependency_graph(
     package_name: str,
     repo: str,
@@ -271,8 +281,7 @@ def build_dependency_graph(
         test_mode: Если True, данные берутся из локального файла repo.
 
     Returns:
-        Граф, в котором ключи — имена пакетов, а значения — словари
-        их прямых зависимостей с версиями.
+        Граф {имя пакета: {имя зависимости: версия}}.
 
     Raises:
         ValidationError: Если данные пакета некорректны или отсутствуют.
@@ -284,7 +293,7 @@ def build_dependency_graph(
     graph: dict[str, dict[str, str]] = {}
     visited: set[str] = set()
     scheduled: set[str] = {package_name}
-    queue = deque([package_name])
+    queue: deque[str] = deque([package_name])
 
     while queue:
         current = queue.popleft()
@@ -297,11 +306,7 @@ def build_dependency_graph(
         )
         dependencies = _normalize_dependencies(package_data, current)
         graph[current] = dependencies
-
-        for dependency in dependencies:
-            if dependency not in scheduled:
-                scheduled.add(dependency)
-                queue.append(dependency)
+        _enqueue_new_dependencies(dependencies, scheduled, queue)
 
     return graph
 
@@ -351,6 +356,26 @@ def _format_tree_node(
     return f"{prefix}{branch}{package}{cycle_mark}"
 
 
+def _push_children(
+    stack: list[tuple[str, str, frozenset[str], bool, bool]],
+    dependencies: list[str],
+    child_prefix: str,
+    next_ancestors: frozenset[str],
+) -> None:
+    """Кладёт в стек дочерние узлы в обратном порядке для LIFO-вывода."""
+    last_index = len(dependencies) - 1
+    for index in range(last_index, -1, -1):
+        stack.append(
+            (
+                dependencies[index],
+                child_prefix,
+                next_ancestors,
+                index == last_index,
+                False,
+            )
+        )
+
+
 def print_ascii_tree(
     root: str,
     graph: dict[str, dict[str, str]],
@@ -366,7 +391,9 @@ def print_ascii_tree(
     """
     print(f"\nASCII-дерево зависимостей: {root}")
 
-    stack = [(root, "", frozenset(), True, True)]
+    stack: list[tuple[str, str, frozenset[str], bool, bool]] = [
+        (root, "", frozenset(), True, True)
+    ]
 
     while stack:
         package, prefix, ancestors, is_last, is_root = stack.pop()
@@ -377,23 +404,10 @@ def print_ascii_tree(
 
         next_ancestors = ancestors | {package}
         dependencies = sorted(graph.get(package, {}))
-
-        if is_root:
-            child_prefix = ""
-        else:
-            child_prefix = prefix + ("    " if is_last else "|   ")
-
-        for index in range(len(dependencies) - 1, -1, -1):
-            dependency = dependencies[index]
-            stack.append(
-                (
-                    dependency,
-                    child_prefix,
-                    next_ancestors,
-                    index == len(dependencies) - 1,
-                    False,
-                )
-            )
+        child_prefix = (
+            "" if is_root else prefix + ("    " if is_last else "|   ")
+        )
+        _push_children(stack, dependencies, child_prefix, next_ancestors)
 
 
 def _build_dependency_count(
@@ -418,20 +432,30 @@ def _build_dependents(
     return dependents
 
 
+def _raise_cycle_error(dependency_count: dict[str, int]) -> None:
+    """Сообщает о циклических зависимостях, оставшихся необработанными."""
+    cyclic_packages = sorted(
+        package for package, count in dependency_count.items() if count > 0
+    )
+    raise ValidationError(
+        "Невозможно определить полный порядок загрузки: "
+        "обнаружены циклические зависимости. "
+        f"Затронутые пакеты: {', '.join(cyclic_packages)}"
+    )
+
+
 def get_load_order(
     graph: dict[str, dict[str, str]],
 ) -> list[str]:
     """Определяет порядок загрузки пакетов топологической сортировкой.
 
     Пакеты располагаются так, чтобы каждая зависимость находилась
-    раньше пакета, которому она необходима.
-
-    Используется алгоритм Кана без рекурсии. Если граф содержит цикл,
-    полный порядок загрузки построить невозможно.
+    раньше пакета, которому она необходима. Используется алгоритм Кана
+    без рекурсии. Если граф содержит цикл, полный порядок построить
+    невозможно.
 
     Args:
-        graph: Граф, в котором ключи — пакеты, а значения —
-            словари их прямых зависимостей.
+        graph: Граф {пакет: {зависимость: версия}}.
 
     Returns:
         Список имён пакетов в порядке загрузки.
@@ -447,7 +471,6 @@ def get_load_order(
             package for package, count in dependency_count.items() if count == 0
         )
     )
-
     load_order: list[str] = []
 
     while queue:
@@ -460,13 +483,6 @@ def get_load_order(
                 queue.append(dependent)
 
     if len(load_order) != len(graph):
-        cyclic_packages = sorted(
-            package for package, count in dependency_count.items() if count > 0
-        )
-        raise ValidationError(
-            "Невозможно определить полный порядок загрузки: "
-            "обнаружены циклические зависимости. "
-            f"Затронутые пакеты: {', '.join(cyclic_packages)}"
-        )
+        _raise_cycle_error(dependency_count)
 
     return load_order

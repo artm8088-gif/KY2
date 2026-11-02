@@ -43,6 +43,46 @@ class VisualizationError(Exception):
     """
 
 
+def _collect_packages(graph: dict) -> list[str]:
+    """Возвращает отсортированный список всех пакетов графа.
+
+    Включает как ключи словаря, так и пакеты, встречающиеся только
+    в списках зависимостей, чтобы показать и пакеты без собственных
+    зависимостей.
+
+    Args:
+        graph: Словарь зависимостей.
+
+    Returns:
+        Отсортированный список уникальных имён пакетов.
+    """
+    return sorted(
+        set(graph)
+        | {
+            dependency
+            for dependencies in graph.values()
+            for dependency in dependencies
+        }
+    )
+
+
+def _build_node_ids(packages: list[str]) -> dict[str, str]:
+    """Сопоставляет каждому пакету уникальный идентификатор Mermaid.
+
+    Args:
+        packages: Отсортированный список имён пакетов.
+
+    Returns:
+        Словарь вида {имя пакета: node_N}.
+    """
+    return {package: f"node_{index}" for index, package in enumerate(packages)}
+
+
+def _escape_package_label(package: str) -> str:
+    """Экранирует специальные символы в подписи узла Mermaid."""
+    return package.replace("&", "&amp;").replace('"', "#quot;")
+
+
 def generate_mermaid(graph: dict) -> str:
     r"""Преобразует граф зависимостей в текстовое описание Mermaid.
 
@@ -71,42 +111,69 @@ def generate_mermaid(graph: dict) -> str:
         Пакеты и зависимости сортируются, чтобы результат был
         предсказуемым при одинаковом входном графе.
     """
-    # Первая строка задаёт тип диаграммы и направление сверху вниз.
     lines = ["flowchart TD"]
+    packages = _collect_packages(graph)
+    node_ids = _build_node_ids(packages)
 
-    # Собираем все пакеты: ключи графа и все найденные зависимости.
-    # Это позволяет показать также пакеты без собственных зависимостей.
-    packages = sorted(
-        set(graph)
-        | {
-            dependency
-            for dependencies in graph.values()
-            for dependency in dependencies
-        }
-    )
-
-    # Назначаем каждому пакету уникальный идентификатор Mermaid.
-    # Индекс зависит от отсортированного списка пакетов.
-    node_ids = {
-        package: f"node_{index}" for index, package in enumerate(packages)
-    }
-
-    # Объявляем узлы и используем имя пакета как видимую подпись.
     for package in packages:
-        # Экранируем специальные символы, чтобы они не нарушали
-        # структуру Mermaid-описания.
-        label = package.replace("&", "&amp;").replace('"', "#quot;")
-
+        label = _escape_package_label(package)
         lines.append(f'    {node_ids[package]}["{label}"]')
 
-    # Добавляем связи от пакета к каждой его зависимости.
-    # Сортировка обеспечивает стабильный порядок рёбер в файле.
     for parent, dependencies in sorted(graph.items()):
         for dependency in sorted(dependencies):
             lines.append(f"    {node_ids[parent]} --> {node_ids[dependency]}")
 
-    # Возвращаем готовый текст диаграммы с завершающим переводом строки.
     return "\n".join(lines) + "\n"
+
+
+def _validate_output_path(output_path: str) -> Path:
+    """Проверяет расширение выходного пути и возвращает объект Path.
+
+    Args:
+        output_path: Путь к результирующему SVG-файлу.
+
+    Returns:
+        Объект pathlib.Path с раскрытым домашним каталогом.
+
+    Raises:
+        VisualizationError: Если расширение файла не .svg.
+    """
+    svg_path = Path(output_path).expanduser()
+    if svg_path.suffix.lower() != ".svg":
+        raise VisualizationError("Выходной файл должен иметь расширение .svg.")
+    return svg_path
+
+
+def _write_mermaid_file(mermaid_text: str, svg_path: Path) -> Path:
+    """Записывает Mermaid-описание рядом с целевым SVG-файлом.
+
+    Args:
+        mermaid_text: Текст Mermaid-диаграммы.
+        svg_path: Путь к целевому SVG-файлу.
+
+    Returns:
+        Путь к созданному .mmd-файлу.
+    """
+    mermaid_path = svg_path.with_suffix(".mmd")
+    mermaid_path.write_text(mermaid_text, encoding="utf-8")
+    return mermaid_path
+
+
+def _render_and_save_svg(mermaid_text: str, svg_path: Path) -> None:
+    """Преобразует Mermaid-описание в SVG и сохраняет его на диск.
+
+    Args:
+        mermaid_text: Текст Mermaid-диаграммы.
+        svg_path: Путь, по которому нужно сохранить SVG.
+
+    Raises:
+        VisualizationError: Если SVG-файл не появился после сохранения.
+    """
+    svg = mermaidx.render(mermaid_text)
+    svg.save(str(svg_path.resolve()))
+
+    if not svg_path.is_file():
+        raise VisualizationError("SVG-файл не был создан.")
 
 
 def save_graph(graph: dict, output_path: str) -> Path:
@@ -136,35 +203,14 @@ def save_graph(graph: dict, output_path: str) -> Path:
         Записывает файлы .mmd и .svg.
         Выводит пути к созданным файлам в консоль.
     """
-    # Создаём объект пути и раскрываем обозначение домашнего каталога.
-    svg_path = Path(output_path).expanduser()
-
-    # Проверяем расширение до начала сохранения.
-    if svg_path.suffix.lower() != ".svg":
-        raise VisualizationError("Выходной файл должен иметь расширение .svg.")
+    svg_path = _validate_output_path(output_path)
 
     try:
-        # Создаём родительские каталоги, если их ещё нет.
         svg_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Преобразуем граф в Mermaid и сохраняем текстовое представление.
         mermaid_text = generate_mermaid(graph)
-        mermaid_path = svg_path.with_suffix(".mmd")
-
-        mermaid_path.write_text(
-            mermaid_text,
-            encoding="utf-8",
-        )
-
-        # Преобразуем Mermaid-описание в объект SVG средствами mermaidx.
-        svg = mermaidx.render(mermaid_text)
-
-        # Сохраняем SVG по абсолютному пути.
-        svg.save(str(svg_path.resolve()))
-
-        # Дополнительно проверяем наличие выходного файла.
-        if not svg_path.is_file():
-            raise VisualizationError("SVG-файл не был создан.")
+        mermaid_path = _write_mermaid_file(mermaid_text, svg_path)
+        _render_and_save_svg(mermaid_text, svg_path)
 
         print(f"Mermaid-описание сохранено: {mermaid_path}")
         print(f"Изображение графа сохранено: {svg_path}")
@@ -172,12 +218,9 @@ def save_graph(graph: dict, output_path: str) -> Path:
         return svg_path
 
     except VisualizationError:
-        # Не оборачиваем повторно уже сформированную ошибку визуализации.
         raise
 
     except Exception as exc:
-        # Преобразуем ошибку библиотеки или файловой системы в
-        # исключение модуля, сохраняя исходную причину.
         raise VisualizationError(
             f"Не удалось создать визуализацию: {exc}"
         ) from exc

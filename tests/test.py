@@ -16,19 +16,24 @@ from src.visualization import (
     save_graph,
 )
 
-# ---------- Вспомогательная функция ----------
-
 
 def write_repo(tmp_path, data):
+    """Записывает тестовый репозиторий в JSON-файл и возвращает его путь.
+
+    Args:
+        tmp_path: Каталог pytest для временных файлов.
+        data: Python-объект, который нужно сериализовать в JSON.
+
+    Returns:
+        Строковый путь к созданному файлу repo.json.
+    """
     path = tmp_path / "repo.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return str(path)
 
 
-# ---------- CLI и валидация ----------
-
-
 def test_cli_default_options():
+    """Проверяет значения по умолчанию для опций CLI."""
     config = parse_args(
         [
             "--package",
@@ -48,6 +53,7 @@ def test_cli_default_options():
 
 
 def test_cli_all_options(tmp_path):
+    """Проверяет разбор CLI при передаче всех опций одновременно."""
     repo = write_repo(tmp_path, {"A": {"dependencies": {}}})
 
     config = parse_args(
@@ -75,6 +81,7 @@ def test_cli_all_options(tmp_path):
 
 @pytest.mark.parametrize("package", ["", "   ", " axios"])
 def test_invalid_package(package):
+    """Проверяет, что некорректное имя пакета отклоняется."""
     with pytest.raises(ValidationError):
         parse_args(
             [
@@ -91,11 +98,13 @@ def test_invalid_package(package):
     ["", "   ", "ftp://example.com", "not-a-url"],
 )
 def test_invalid_repo_url(repo):
+    """Проверяет, что некорректный URL репозитория отклоняется."""
     with pytest.raises(ValidationError):
         parse_args(["--package", "axios", "--repo", repo])
 
 
 def test_missing_test_repo(tmp_path):
+    """Проверяет ошибку при отсутствующем файле тестового репозитория."""
     with pytest.raises(ValidationError, match="не найден"):
         parse_args(
             [
@@ -109,6 +118,7 @@ def test_missing_test_repo(tmp_path):
 
 
 def test_repo_directory_is_invalid(tmp_path):
+    """Проверяет ошибку, когда вместо файла репозитория передана директория."""
     with pytest.raises(ValidationError, match="не является файлом"):
         parse_args(
             [
@@ -123,6 +133,7 @@ def test_repo_directory_is_invalid(tmp_path):
 
 @pytest.mark.parametrize("output", ["", "   "])
 def test_invalid_output(output):
+    """Проверяет, что пустой путь к выходному файлу отклоняется."""
     with pytest.raises(ValidationError):
         parse_args(
             [
@@ -137,6 +148,7 @@ def test_invalid_output(output):
 
 
 def test_output_directory_is_invalid(tmp_path):
+    """Проверяет ошибку, когда вместо файла вывода передана директория."""
     with pytest.raises(ValidationError, match="директорию"):
         parse_args(
             [
@@ -150,10 +162,8 @@ def test_output_directory_is_invalid(tmp_path):
         )
 
 
-# ---------- Чтение тестового репозитория ----------
-
-
 def test_read_valid_repo(tmp_path):
+    """Проверяет успешное чтение корректного тестового репозитория."""
     repo = write_repo(
         tmp_path,
         {
@@ -178,6 +188,7 @@ def test_read_valid_repo(tmp_path):
     ],
 )
 def test_invalid_repo_structure(tmp_path, data):
+    """Проверяет, что некорректная структура репозитория отклоняется."""
     repo = write_repo(tmp_path, data)
 
     with pytest.raises(ValidationError):
@@ -185,6 +196,7 @@ def test_invalid_repo_structure(tmp_path, data):
 
 
 def test_invalid_json(tmp_path):
+    """Проверяет, что файл с некорректным JSON отклоняется."""
     path = tmp_path / "broken.json"
     path.write_text("{invalid json", encoding="utf-8")
 
@@ -192,10 +204,8 @@ def test_invalid_json(tmp_path):
         read_test_repository(str(path))
 
 
-# ---------- Построение графа BFS ----------
-
-
 def test_build_graph_bfs(tmp_path):
+    """Проверяет построение полного транзитивного графа через BFS."""
     repo = write_repo(
         tmp_path,
         {
@@ -216,6 +226,7 @@ def test_build_graph_bfs(tmp_path):
 
 
 def test_build_graph_cycle(tmp_path):
+    """Проверяет, что BFS корректно обходит циклические зависимости."""
     repo = write_repo(
         tmp_path,
         {
@@ -232,6 +243,7 @@ def test_build_graph_cycle(tmp_path):
 
 
 def test_build_graph_missing_package(tmp_path):
+    """Проверяет ошибку, если пакет отсутствует в тестовом репозитории."""
     repo = write_repo(
         tmp_path,
         {
@@ -243,10 +255,8 @@ def test_build_graph_missing_package(tmp_path):
         build_dependency_graph("A", repo, test_mode=True)
 
 
-# ---------- Порядок загрузки ----------
-
-
 def test_load_order_dependencies_first():
+    """Проверяет, что зависимости идут в порядке загрузки раньше зависимых."""
     graph = {
         "A": {"B": "1", "C": "1"},
         "B": {"D": "1"},
@@ -264,6 +274,7 @@ def test_load_order_dependencies_first():
 
 
 def test_load_order_cycle():
+    """Проверяет, что циклический граф приводит к ValidationError."""
     graph = {
         "A": {"B": "1"},
         "B": {"A": "1"},
@@ -273,10 +284,8 @@ def test_load_order_cycle():
         get_load_order(graph)
 
 
-# ---------- Mermaid и SVG ----------
-
-
 def test_generate_mermaid_nodes_and_edges():
+    """Проверяет наличие узлов и связей в сгенерированном Mermaid-описании."""
     graph = {
         "A": ["B"],
         "B": ["C"],
@@ -293,6 +302,7 @@ def test_generate_mermaid_nodes_and_edges():
 
 
 def test_mermaid_is_deterministic():
+    """Проверяет, что Mermaid-описание не зависит от порядка ключей графа."""
     graph1 = {"B": ["C"], "A": ["B"]}
     graph2 = {"A": ["B"], "B": ["C"]}
 
@@ -300,10 +310,12 @@ def test_mermaid_is_deterministic():
 
 
 def test_save_graph(tmp_path, monkeypatch):
+    """Проверяет сохранение .mmd и .svg без реального вызова mermaidx."""
     from src import visualization
 
     class FakeDiagram:
         def save(self, path):
+            """Пишет заглушку SVG в указанный файл."""
             with open(path, "w", encoding="utf-8") as file:
                 file.write("<svg></svg>")
 
@@ -322,5 +334,6 @@ def test_save_graph(tmp_path, monkeypatch):
 
 
 def test_save_graph_wrong_extension(tmp_path):
+    """Проверяет ошибку при неподходящем расширении выходного файла."""
     with pytest.raises(VisualizationError, match="расширение"):
         save_graph({"A": []}, str(tmp_path / "graph.png"))

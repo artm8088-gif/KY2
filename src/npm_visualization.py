@@ -64,7 +64,6 @@ def run_command(
         check=False,
     )
 
-    # Ненулевой код завершения означает, что команда сообщила об ошибке.
     if result.returncode != 0:
         raise RuntimeError(
             f"Команда завершилась с ошибкой:\n"
@@ -73,6 +72,16 @@ def run_command(
         )
 
     return result
+
+
+def _escape_label(label: str) -> str:
+    """Экранирует HTML-символы и кавычки для подписи узла Mermaid."""
+    return (
+        label.replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 def npm_tree_to_mermaid(package_name: str, tree: dict) -> str:
@@ -100,7 +109,7 @@ def npm_tree_to_mermaid(package_name: str, tree: dict) -> str:
         HTML-символы и кавычки.
     """
     lines = ["flowchart TD"]
-    counter = 0
+    state = {"counter": 0}
 
     def add_node(
         package: dict,
@@ -113,46 +122,116 @@ def npm_tree_to_mermaid(package_name: str, tree: dict) -> str:
             parent_id: Идентификатор родительского узла. Для корневого
                 пакета значение равно None.
         """
-        nonlocal counter
-
-        # Если сведения отсутствуют, используются значения по умолчанию.
         name = package.get("name", "unknown")
         version = package.get("version", "unknown")
 
-        # Уникальный идентификатор нужен даже при повторении имени пакета.
-        node_id = f"n{counter}"
-        counter += 1
+        node_id = f"n{state['counter']}"
+        state["counter"] += 1
 
-        # Формируем читаемую подпись узла.
-        label = f"{name}@{version}"
-        label = (
-            label.replace("&", "&amp;")
-            .replace('"', "&quot;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-
+        label = _escape_label(f"{name}@{version}")
         lines.append(f'    {node_id}["{label}"]')
 
-        # Соединяем текущий пакет с родительским узлом.
         if parent_id is not None:
             lines.append(f"    {parent_id} --> {node_id}")
 
-        # Обрабатываем зависимости в алфавитном порядке,
-        # чтобы результат был более предсказуемым.
         dependencies = package.get("dependencies", {})
-
         for dep_name, dependency in sorted(dependencies.items()):
-            # Имя зависимости обычно уже присутствует в JSON npm.
-            # setdefault заполняет его только при отсутствии значения.
             dependency.setdefault("name", dep_name)
             add_node(dependency, node_id)
 
-    # Начинаем построение диаграммы с выбранного пакета.
     add_node(tree)
-
-    # Завершающий перевод строки упрощает чтение файла .mmd.
     return "\n".join(lines) + "\n"
+
+
+def _install_and_get_tree(
+    package_name: str,
+    temp_dir: Path,
+) -> dict:
+    """Инициализирует npm-проект, устанавливает пакет и возвращает дерево.
+
+    Args:
+        package_name: Имя устанавливаемого npm-пакета.
+        temp_dir: Временный каталог для npm-проекта.
+
+    Returns:
+        Словарь с деревом зависимостей из вывода npm ls --all --json.
+
+    Raises:
+        RuntimeError: Если npm завершился с ошибкой.
+        ValueError: Если вывод npm содержит некорректный JSON.
+    """
+    run_command(["npm", "init", "-y"], temp_dir)
+    run_command(
+        [
+            "npm",
+            "install",
+            package_name,
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+        ],
+        temp_dir,
+    )
+    result = run_command(["npm", "ls", "--all", "--json"], temp_dir)
+    return json.loads(result.stdout)
+
+
+def _extract_package_tree(tree: dict, package_name: str) -> dict:
+    """Извлекает поддерево целевого пакета из корневого дерева npm.
+
+    Args:
+        tree: Полное дерево зависимостей из вывода npm ls.
+        package_name: Имя целевого пакета.
+
+    Returns:
+        Поддерево целевого пакета с гарантированно заполненным полем name.
+
+    Raises:
+        RuntimeError: Если пакет отсутствует в выводе npm ls.
+    """
+    root_dependencies = tree.get("dependencies", {})
+    package_tree = root_dependencies.get(package_name)
+
+    if package_tree is None:
+        raise RuntimeError(f"Пакет {package_name} не найден в выводе npm ls.")
+
+    package_tree.setdefault("name", package_name)
+    return package_tree
+
+
+def _write_outputs(
+    package_tree: dict,
+    package_name: str,
+    safe_name: str,
+    output_dir: Path,
+) -> tuple[Path, Path, Path]:
+    """Сохраняет JSON, Mermaid и SVG-файлы визуализации.
+
+    Args:
+        package_tree: Поддерево целевого пакета.
+        package_name: Имя пакета (используется при построении Mermaid).
+        safe_name: Безопасное имя пакета для имени файла.
+        output_dir: Каталог, в который сохраняются файлы.
+
+    Returns:
+        Кортеж путей (json_path, mmd_path, svg_path).
+    """
+    json_path = output_dir / f"{safe_name}-npm.json"
+    mmd_path = output_dir / f"{safe_name}-npm.mmd"
+    svg_path = output_dir / f"{safe_name}-npm.svg"
+
+    json_path.write_text(
+        json.dumps(package_tree, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    mermaid_text = npm_tree_to_mermaid(package_name, package_tree)
+    mmd_path.write_text(mermaid_text, encoding="utf-8")
+
+    diagram = mermaidx.render(mermaid_text)
+    diagram.save(str(svg_path.resolve()))
+
+    return json_path, mmd_path, svg_path
 
 
 def create_npm_visualization(package_name: str) -> None:
@@ -179,85 +258,17 @@ def create_npm_visualization(package_name: str) -> None:
         Exception: Библиотека mermaidx может выбросить собственную ошибку
             при формировании или сохранении SVG.
     """
-    # Файлы создаются в каталоге, из которого запущена программа.
     output_dir = Path.cwd()
-
-    # Преобразуем имя пакета в более удобный фрагмент имени файла.
-    # Например, @scope/package превращается в scope-package.
     safe_name = package_name.replace("/", "-").replace("@", "")
 
-    # Временный каталог автоматически удаляется после выхода из блока.
     with tempfile.TemporaryDirectory(prefix="npm-graph-") as temp:
         temp_dir = Path(temp)
-
-        # Создаём минимальный package.json для отдельного npm-проекта.
-        run_command(["npm", "init", "-y"], temp_dir)
-
-        # Устанавливаем пакет вместе с его зависимостями.
-        # --ignore-scripts запрещает выполнение lifecycle-скриптов.
-        # --no-audit отключает аудит безопасности при установке.
-        # --no-fund отключает сообщения о финансировании пакетов.
-        run_command(
-            [
-                "npm",
-                "install",
-                package_name,
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-            ],
-            temp_dir,
+        tree = _install_and_get_tree(package_name, temp_dir)
+        package_tree = _extract_package_tree(tree, package_name)
+        json_path, mmd_path, svg_path = _write_outputs(
+            package_tree, package_name, safe_name, output_dir
         )
 
-        # Получаем полное установленное дерево в формате JSON.
-        result = run_command(
-            ["npm", "ls", "--all", "--json"],
-            temp_dir,
-        )
-        tree = json.loads(result.stdout)
-
-        # Из корневого проекта извлекаем установленный целевой пакет.
-        root_dependencies = tree.get("dependencies", {})
-        package_tree = root_dependencies.get(package_name)
-
-        if package_tree is None:
-            raise RuntimeError(
-                f"Пакет {package_name} не найден в выводе npm ls."
-            )
-
-        # Некоторые версии npm могут не включать имя в ожидаемом месте.
-        package_tree.setdefault("name", package_name)
-
-        # Формируем пути к трём файлам результата.
-        json_path = output_dir / f"{safe_name}-npm.json"
-        mmd_path = output_dir / f"{safe_name}-npm.mmd"
-        svg_path = output_dir / f"{safe_name}-npm.svg"
-
-        # Сохраняем исходные данные npm с отступами для удобного чтения.
-        json_path.write_text(
-            json.dumps(
-                package_tree,
-                indent=2,
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-
-        # Преобразуем дерево в Mermaid и сохраняем текст диаграммы.
-        mermaid_text = npm_tree_to_mermaid(
-            package_name,
-            package_tree,
-        )
-        mmd_path.write_text(
-            mermaid_text,
-            encoding="utf-8",
-        )
-
-        # Создаём SVG на основе Mermaid-описания.
-        diagram = mermaidx.render(mermaid_text)
-        diagram.save(str(svg_path.resolve()))
-
-        # Выводим расположение сформированных файлов.
         print(f"Дерево npm: {json_path}")
         print(f"Mermaid:    {mmd_path}")
         print(f"SVG:        {svg_path}")
@@ -275,7 +286,7 @@ def main() -> None:
             "Получение дерева зависимостей npm и создание "
             "Mermaid/SVG-визуализации."
         ),
-        epilog=("Пример: python -m src.npm_visualization " "--package axios"),
+        epilog=("Пример: python -m src.npm_visualization --package axios"),
     )
 
     parser.add_argument(
@@ -288,12 +299,7 @@ def main() -> None:
 
     try:
         create_npm_visualization(args.package)
-    except (
-        RuntimeError,
-        OSError,
-        ValueError,
-        KeyError,
-    ) as exc:
+    except (RuntimeError, OSError, ValueError, KeyError) as exc:
         parser.exit(1, f"Ошибка: {exc}\n")
 
 
